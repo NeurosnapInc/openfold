@@ -21,7 +21,6 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension, CUDAExtensio
 
 from scripts.utils import get_nvidia_cc
 
-
 version_dependent_macros = [
     '-DVERSION_GE_1_1',
     '-DVERSION_GE_1_3',
@@ -38,44 +37,51 @@ extra_cuda_flags = [
 ]
 
 def get_cuda_bare_metal_version(cuda_dir):
-    if cuda_dir==None or torch.version.cuda==None:
+    if cuda_dir is None or torch.version.cuda is None:
         print("CUDA is not found, cpu version is installed")
         return None, -1, 0
     else:
-        raw_output = subprocess.check_output([cuda_dir + "/bin/nvcc", "-V"], universal_newlines=True)
+        raw_output = subprocess.check_output([os.path.join(cuda_dir, "bin/nvcc"), "-V"], universal_newlines=True)
         output = raw_output.split()
         release_idx = output.index("release") + 1
         release = output[release_idx].split(".")
         bare_metal_major = release[0]
         bare_metal_minor = release[1][0]
-        
         return raw_output, bare_metal_major, bare_metal_minor
 
+# Start with some default compute capabilities
 compute_capabilities = set([
-    (5, 2), # Titan X
-    (6, 1), # GeForce 1000-series
+    (5, 2),  # Titan X
+    (6, 1),  # GeForce 1000-series
 ])
 
+# Always include capability 7.0 (e.g., V100)
 compute_capabilities.add((7, 0))
+
+# If CUDA is version 11 or above, add support for A100 (compute 8.0)
 _, bare_metal_major, _ = get_cuda_bare_metal_version(CUDA_HOME)
 if int(bare_metal_major) >= 11:
     compute_capabilities.add((8, 0))
 
+# Optionally, override with the GPU selected by the user/system if available
 compute_capability, _ = get_nvidia_cc()
 if compute_capability is not None:
     compute_capabilities = set([compute_capability])
 
-cc_flag = []
-for major, minor in list(compute_capabilities):
-    cc_flag.extend([
+# Build the gencode flags based on the computed capabilities
+cc_flags = []
+for major, minor in sorted(list(compute_capabilities)):
+    cc_flags.extend([
         '-gencode',
         f'arch=compute_{major}{minor},code=sm_{major}{minor}',
     ])
 
-extra_cuda_flags += cc_flag
+# Add the computed cc flags to extra cuda flags
+extra_cuda_flags += cc_flags
 
-cc_flag = ['-gencode', 'arch=compute_70,code=sm_70']
+# (Removed the hard-coded cc_flag = ['-gencode', 'arch=compute_70,code=sm_70'] to ensure we use the full list)
 
+# Build the extension modules
 if bare_metal_major != -1:
     modules = [CUDAExtension(
         name="attn_core_inplace_cuda",
